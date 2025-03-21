@@ -6,7 +6,7 @@ import time
 from src.visualizer import CameraVisualizer
 from src.loader import load_quick, load_nerf, load_colmap
 from src.utils import load_image, rescale_cameras, recenter_cameras
-from src.frame_smoothing import apply_smoothing_algorithm
+from src.old_frame_smoothing import apply_smoothing_algorithm
 
 import dash
 from dash import dcc, html
