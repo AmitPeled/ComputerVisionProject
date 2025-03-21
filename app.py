@@ -6,6 +6,7 @@ import time
 from src.visualizer import CameraVisualizer
 from src.loader import load_quick, load_nerf, load_colmap
 from src.utils import load_image, rescale_cameras, recenter_cameras
+from src.frame_smoothing import apply_smoothing_algorithm
 
 import dash
 from dash import dcc, html
@@ -18,7 +19,7 @@ app = dash.Dash(__name__)
 def get_params():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', type=str)
-    parser.add_argument('--format', default='quick', choices=['quick', 'nerf', 'colmap'])
+    parser.add_argument('--format', default='colmap', choices=['quick', 'nerf', 'colmap'])
     parser.add_argument('--type', default=None, choices=[None, 'sph', 'xyz', 'elu', 'c2w', 'w2c'])
     parser.add_argument('--no_images', action='store_true')
     parser.add_argument('--mesh_path', type=str, default=None)
@@ -73,40 +74,49 @@ def get_params():
             images.append(load_image(fpath, sz=args.image_size))
 
     legends = [re.search(r'(\d\d)\.(\w+$)', name).group(1) for name in legends]
-    poses, colors = poses[:40], colors[:40]
+    poses, colors, legends = poses[:40], colors[:40], legends[:40]
 
     return args, poses, colors, legends, images
 
 
 def main():
     args, poses, colors, legends, images = get_params()
+    new_poses, center_position, generated_poses, excluded_poses = apply_smoothing_algorithm(poses)
+    viz = CameraVisualizer(poses, new_poses, generated_poses, excluded_poses, center_position, legends, colors,
+                           images=images)
 
-    viz = CameraVisualizer(poses, legends, colors, images=images)
-    fig = viz.update_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True, show_ticklabels=True,
-                            show_background=True, y_up=args.y_up)
+    gif_fig = viz.update_gif_figure(0)
+    camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True, show_ticklabels=True,
+                                          show_background=True, y_up=args.y_up)
 
     app.layout = html.Div([
-        dcc.Graph(id='camera-visualization', figure=fig),
+        html.Div([
+            dcc.Graph(id='camera-visualization', figure=camera_fig),
+            # dcc.Store(id='camera-store', data={}),  # Store camera updates
+            # html.Pre(id='camera-output')  # Display camera settings
+            html.H3("Camera Visualization")
+        ], style={"width": "50%", "display": "inline-block"}),
+        html.Div([
+            dcc.Graph(id='running-gif', figure=gif_fig),
+            html.H3("Running GIF")
+        ], style={"width": "50%", "display": "inline-block"}),
         dcc.Interval(id='interval-update', interval=2000, n_intervals=0),
-        # dcc.Store(id='camera-store', data={}),  # Store camera updates
-        # html.Pre(id='camera-output')  # Display camera settings
     ])
 
     # Callback to update the figure dynamically
     @app.callback(
         Output('camera-visualization', 'figure'),
+        Output('running-gif', 'figure'),
         Input('interval-update', 'n_intervals')
     )
     def update_figure(n):
-        pose_index = n % len(poses)  # Use n_intervals to track updates
-        new_colors = ['red'] * len(colors)
-        new_colors[pose_index] = 'green'
-        new_viz = CameraVisualizer(poses, legends, new_colors, images=images)
-        new_fig = new_viz.update_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True,
-                                        show_ticklabels=True,
-                                        show_background=True, y_up=args.y_up, highlight_index=pose_index)
+        pose_index = n % len(poses)
+        new_gif_fig = viz.update_gif_figure(pose_index)
+        new_camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True,
+                                           show_ticklabels=True,
+                                           show_background=True, y_up=args.y_up, highlight_index=pose_index)
 
-        return new_fig
+        return new_camera_fig, new_gif_fig
 
 
 @app.callback(

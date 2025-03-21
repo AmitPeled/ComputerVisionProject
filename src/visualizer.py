@@ -5,8 +5,7 @@ import plotly.graph_objects as go
 import numpy as np
 
 
-def calc_cam_cone_pts_3d(c2w, fov_deg, zoom = 1.0):
-
+def calc_cam_cone_pts_3d(c2w, fov_deg, zoom=1.0):
     fov_rad = np.deg2rad(fov_deg)
 
     cam_x = c2w[0, -1]
@@ -36,7 +35,7 @@ def calc_cam_cone_pts_3d(c2w, fov_deg, zoom = 1.0):
     corn_z2 = cam_z + corn2[2]
     corn3 = np.array(corn3) / np.linalg.norm(corn3, ord=2) * zoom
     corn_x3 = cam_x + corn3[0]
-    corn_y3 = cam_y + corn3[1] 
+    corn_y3 = cam_y + corn3[1]
     corn_z3 = cam_z + corn3[2]
     corn4 = np.array(corn4) / np.linalg.norm(corn4, ord=2) * zoom
     corn_x4 = cam_x + corn4[0]
@@ -56,19 +55,24 @@ def calc_cam_cone_pts_3d(c2w, fov_deg, zoom = 1.0):
 
 class CameraVisualizer:
 
-    def __init__(self, poses, legends, colors, images=None, mesh_path=None, camera_x=1.0):
+    def __init__(self, original_poses, new_poses, generated_poses, excluded_poses, center, legends, colors, images=None,
+                 mesh_path=None, camera_x=1.0):
         self._fig = None
-
         self._camera_x = camera_x
-        
-        self._poses = poses
+        self._all_poses = new_poses + excluded_poses
+        self._original_poses = original_poses
+        self._new_poses = new_poses
+        self._generated_poses = generated_poses
+        self._excluded_poses = excluded_poses
+        self._center = center
+
         self._legends = legends
         self._colors = colors
 
         self._raw_images = None
         self._bit_images = None
         self._image_colorscale = None
-        
+
         if images is not None:
             self._raw_images = images
             self._bit_images = []
@@ -88,7 +92,6 @@ class CameraVisualizer:
             import trimesh
             self._mesh = trimesh.load(mesh_path, force='mesh')
 
-
     def encode_image(self, raw_image):
         '''
         :param raw_image (H, W, 3) array of uint8 in [0, 255].
@@ -103,27 +106,38 @@ class CameraVisualizer:
         #     'P', palette='WEB', dither=None)
         colorscale = [
             [i / 255.0, 'rgb({}, {}, {})'.format(*rgb)] for i, rgb in enumerate(idx_to_color)]
-        
+
         return bit_image, colorscale
 
+    def update_gif_figure(self, index):
+        """Update the figure to display the next image in the sequence."""
+        if not self._raw_images or self._raw_images[index] is None:
+            return go.Figure()  # Return empty figure if no images
 
-    def update_figure(
-            self, scene_bounds, 
-            base_radius=0.0, zoom_scale=1.0, fov_deg=50., 
-            mesh_z_shift=0.0, mesh_scale=1.0, 
+        image_data = self._raw_images[index]
+
+        fig = go.Figure()
+        fig.add_trace(go.Image(z=image_data))  # Add image trace
+        fig.update_layout(title="GIF Animation", margin=dict(l=10, r=10, t=30, b=10))
+        return fig
+
+    def update_camera_figure(
+            self, scene_bounds,
+            base_radius=0.0, zoom_scale=1.0, fov_deg=50.,
+            mesh_z_shift=0.0, mesh_scale=1.0,
             show_background=False, show_grid=False, show_ticklabels=False, y_up=False,
             highlight_index=None,
             scale_factor=0.9
-        ):
+    ):
 
         fig = go.Figure()
 
         if self._mesh is not None:
             fig.add_trace(
                 go.Mesh3d(
-                    x=self._mesh.vertices[:, 0] * mesh_scale,  
-                    y=self._mesh.vertices[:, 2] * -mesh_scale,  
-                    z=(self._mesh.vertices[:, 1] + mesh_z_shift) * mesh_scale,  
+                    x=self._mesh.vertices[:, 0] * mesh_scale,
+                    y=self._mesh.vertices[:, 2] * -mesh_scale,
+                    z=(self._mesh.vertices[:, 1] + mesh_z_shift) * mesh_scale,
                     i=self._mesh.faces[:, 0],
                     j=self._mesh.faces[:, 1],
                     k=self._mesh.faces[:, 2],
@@ -134,12 +148,20 @@ class CameraVisualizer:
                 )
             )
 
-        for i in range(len(self._poses)):
+        highlight_index = highlight_index % len(self._new_poses) if highlight_index else None
+        for i in range(len(self._all_poses)):
             camera_lines_scale_factor = scale_factor if i != highlight_index else 1
 
-            pose = self._poses[i]
-            clr = self._colors[i]
-            legend = self._legends[i]
+            pose = self._all_poses[i]
+            if i == highlight_index:
+                clr = 'green'
+            elif any(np.array_equal(self._all_poses[i], pose) for pose in self._generated_poses):
+                clr = 'deeppink'
+            elif any(np.array_equal(self._all_poses[i], pose) for pose in self._excluded_poses):
+                clr = 'lightgrey'
+            else:
+                clr = 'blue'
+            legend = str(i)
 
             edges = [(0, 1), (0, 2), (0, 3), (0, 4), (1, 2), (2, 3), (3, 4), (4, 1), (0, 5)]
 
@@ -158,8 +180,10 @@ class CameraVisualizer:
 
                     z = np.zeros((H, W)) + base_radius
                     (x, y) = np.meshgrid(
-                        np.linspace(-1.0 * self._camera_x * image_dimensions_scale_factor, 1.0 * self._camera_x * image_dimensions_scale_factor, W),
-                        np.linspace(1.0 * image_dimensions_scale_factor, -1.0 * image_dimensions_scale_factor, H) * H / W
+                        np.linspace(-1.0 * self._camera_x * image_dimensions_scale_factor,
+                                    1.0 * self._camera_x * image_dimensions_scale_factor, W),
+                        np.linspace(1.0 * image_dimensions_scale_factor, -1.0 * image_dimensions_scale_factor,
+                                    H) * H / W
                     )
 
                     xyz = np.concatenate([x[..., None], y[..., None], z[..., None]], axis=-1)
@@ -168,7 +192,8 @@ class CameraVisualizer:
                     x, y, z = rot_xyz[:, :, 0], rot_xyz[:, :, 1], rot_xyz[:, :, 2]
 
                     fig.add_trace(go.Surface(
-                        x=x * image_coordinates_scale_factor, y=y * image_coordinates_scale_factor, z=z * image_coordinates_scale_factor,
+                        x=x * image_coordinates_scale_factor, y=y * image_coordinates_scale_factor,
+                        z=z * image_coordinates_scale_factor,
                         surfacecolor=bit_image,
                         cmin=0,
                         cmax=255,
@@ -197,12 +222,9 @@ class CameraVisualizer:
                     x=[cone[0, 0]], y=[cone[0, 1]], z=[cone[0, 2] - 0.05], showlegend=False,
                     mode='text', text=legend, textposition='bottom center'))
             else:
-                # breakpoint()
-                pass
-                #
-                # fig.add_trace(go.Scatter3d(
-                #     x=[cone[0, 0]], y=[cone[0, 1]], z=[cone[0, 2] + 0.05], showlegend=False,
-                #     mode='text', text=legend, textposition='top center'))
+                fig.add_trace(go.Scatter3d(
+                    x=[cone[0, 0]], y=[cone[0, 1]], z=[cone[0, 2] + 0.05], showlegend=False,
+                    mode='text', text=legend, textposition='top center'))
 
         # look at the center of scene
         fig.update_layout(
