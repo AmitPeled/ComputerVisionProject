@@ -6,7 +6,7 @@ import time
 from src.visualizer import CameraVisualizer
 from src.loader import load_quick, load_nerf, load_colmap
 from src.utils import load_image, rescale_cameras, recenter_cameras
-from src.old_frame_smoothing import apply_smoothing_algorithm
+from src.new_frame_smoothing import apply_smoothing_algorithm
 
 import dash
 from dash import dcc, html
@@ -81,12 +81,13 @@ def get_params():
 
 def main():
     args, poses, colors, legends, images = get_params()
-    new_poses, center_position, generated_poses, excluded_poses = apply_smoothing_algorithm(poses)
-    viz = CameraVisualizer(poses, new_poses, generated_poses, excluded_poses, center_position, legends, colors,
+    new_poses, generated_poses, excluded_poses = apply_smoothing_algorithm(poses)
+    viz = CameraVisualizer(poses, new_poses, generated_poses, excluded_poses, legends, colors,
                            images=images)
 
     gif_fig = viz.update_gif_figure(0)
-    camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True, show_ticklabels=True,
+    camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True,
+                                          show_ticklabels=True,
                                           show_background=True, y_up=args.y_up)
 
     app.layout = html.Div([
@@ -113,8 +114,8 @@ def main():
         pose_index = n % len(poses)
         new_gif_fig = viz.update_gif_figure(pose_index)
         new_camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True,
-                                           show_ticklabels=True,
-                                           show_background=True, y_up=args.y_up, highlight_index=pose_index)
+                                                  show_ticklabels=True,
+                                                  show_background=True, y_up=args.y_up, highlight_index=pose_index)
 
         return new_camera_fig, new_gif_fig
 

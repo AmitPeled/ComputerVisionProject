@@ -55,7 +55,7 @@ def calc_cam_cone_pts_3d(c2w, fov_deg, zoom=1.0):
 
 class CameraVisualizer:
 
-    def __init__(self, original_poses, new_poses, generated_poses, excluded_poses, center, legends, colors, images=None,
+    def __init__(self, original_poses, new_poses, generated_poses, excluded_poses, legends, colors, images=None,
                  mesh_path=None, camera_x=1.0):
         self._fig = None
         self._camera_x = camera_x
@@ -64,7 +64,6 @@ class CameraVisualizer:
         self._new_poses = new_poses
         self._generated_poses = generated_poses
         self._excluded_poses = excluded_poses
-        self._center = center
 
         self._legends = legends
         self._colors = colors

@@ -18,7 +18,7 @@ def find_best_original_edge_points(poses: List) -> Tuple[List, List]:
     #     * The following calculation should take care of the distance to the two rays, and the angles between them
     #     * The goal is to iteratively (O(n^2)) continue to remove one tail or promote one head to find a value that
     #       is optimal in consideration also of the number of poses that were excluded away.
-    return poses
+    return poses, []
 
 
 def generate_smooth_pose_trajectory_connection(
@@ -42,20 +42,33 @@ def generate_smooth_pose_trajectory_connection(
     first_positions = np.array([pose[:3, 3] for pose in first_poses_env])
     last_positions = np.array([pose[:3, 3] for pose in last_poses_env])
 
-    x = np.linspace(0, 1, len(first_positions) + len(last_positions))
-    y = np.vstack((first_positions, last_positions))
+    # Compute cumulative arc length
+    all_positions = np.vstack((last_positions, first_positions))
+    segment_lengths = np.linalg.norm(np.diff(all_positions, axis=0), axis=1)
+    cumulative_lengths = np.insert(np.cumsum(segment_lengths), 0, 0)
 
-    spline = CubicSpline(x, y, axis=0)
-    num_interp_points = len(poses) // 10  # TODO: Arbitrary number of new points
-    interp_x = np.linspace(0, 1, num_interp_points)
-    interp_positions = spline(interp_x)
+    # Normalize lengths to [0, 1] for cubic spline
+    normalized_lengths = cumulative_lengths / cumulative_lengths[-1]
 
+    # Create spline based on arc length
+    spline = CubicSpline(normalized_lengths, all_positions, axis=0)
+
+    # Determine number of interpolation points based on average spacing
+    avg_spacing = np.mean(segment_lengths)
+    num_interp_points = 10 # int(cumulative_lengths[-1] / avg_spacing)
+
+    # Distribute new points uniformly along arc length
+    interp_arc_lengths = np.linspace(0, 1, num_interp_points)
+    interp_positions = spline(interp_arc_lengths)
+
+    # Interpolate rotations using Slerp
     first_rotations = Rotation.from_matrix([pose[:3, :3] for pose in first_poses_env])
     last_rotations = Rotation.from_matrix([pose[:3, :3] for pose in last_poses_env])
 
-    slerp = Slerp([0, 1], Rotation.from_matrix([first_rotations.mean().as_matrix(), last_rotations.mean().as_matrix()]))
-    interp_rotations = slerp(interp_x)
+    slerp = Slerp([0, 1], Rotation.from_matrix([last_rotations.mean().as_matrix(), first_rotations.mean().as_matrix()]))
+    interp_rotations = slerp(interp_arc_lengths)
 
+    # Construct new poses
     generated_poses = []
     for pos, rot in zip(interp_positions, interp_rotations.as_matrix()):
         new_pose = np.eye(4)
