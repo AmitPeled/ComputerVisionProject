@@ -79,9 +79,54 @@ def get_params():
     return args, poses, colors, legends, images
 
 
+def generate_mock_c2w_values(points_file='tools/clicked_points.pkl'):
+    import pickle
+    import numpy as np
+
+    with open(points_file, 'rb') as f:
+        clicked_points = pickle.load(f)
+
+        # Find min and max values for normalization
+    all_x = [point[0] for point in clicked_points]
+    all_y = [point[1] for point in clicked_points]
+
+    min_x, max_x = min(all_x), max(all_x)
+    min_y, max_y = min(all_y), max(all_y)
+
+    # Normalize the points to the range [-1, 1]
+    def normalize(value, min_value, max_value):
+        return 2 * (value - min_value) / (max_value - min_value) - 1
+
+    # List to store the c2w values as ndarrays
+    c2w_values = []
+
+    for point in clicked_points:
+        point_x, point_y = point
+
+        # Normalize the point_x and point_y values
+        normalized_x = normalize(point_x, min_x, max_x) * 3
+        normalized_y = normalize(point_y, min_y, max_y) * 3
+
+        # Create a 4x4 transformation matrix for each normalized point
+        c2w_matrix = np.array([
+            [1, 0, 0, 0],  # Translation on X axis
+            [0, 1, -1, normalized_x],  # Translation on Y axis
+            [0, 0, 1, normalized_y],  # No translation on Z axis
+            [0, 0, -1, 1]  # Homogeneous coordinate
+        ])
+
+        # Append the c2w_matrix to the list
+        c2w_values.append(c2w_matrix)
+
+    return c2w_values
+
+
 def main():
     args, poses, colors, legends, images = get_params()
+    poses = generate_mock_c2w_values()
+
     new_poses, generated_poses, excluded_poses = apply_smoothing_algorithm(poses)
+    # new_poses, generated_poses, excluded_poses = poses, [], [] # apply_smoothing_algorithm(poses)
     viz = CameraVisualizer(poses, new_poses, generated_poses, excluded_poses, legends, colors,
                            images=images)
 
@@ -101,7 +146,7 @@ def main():
             dcc.Graph(id='running-gif', figure=gif_fig),
             html.H3("Running GIF")
         ], style={"width": "50%", "display": "inline-block"}),
-        dcc.Interval(id='interval-update', interval=2000, n_intervals=0),
+        # dcc.Interval(id='interval-update', interval=2000, n_intervals=0),
     ])
 
     # Callback to update the figure dynamically

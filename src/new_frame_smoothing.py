@@ -4,13 +4,14 @@ from scipy.spatial.transform import Rotation, Slerp
 from scipy.interpolate import CubicSpline
 
 
-def find_best_original_edge_points(poses: List) -> Tuple[List, List]:
+def find_best_original_edge_points(poses: List[np.ndarray]) -> Tuple[List, List]:
     """
     Find edge points and exclude the bad points in between.
     :param poses: C2W poses extracted from colman images.txt file
     :return: (List of the new poses with modified edge points after excluding the bad points in between,
               List of excluded poses)
     """
+
     # The xyz poses are in 3d space.
     # Find the best start and end poses by the following method:
     #     * Draw a ray from poses[-2] that passes through poses[-1]
@@ -18,7 +19,85 @@ def find_best_original_edge_points(poses: List) -> Tuple[List, List]:
     #     * The following calculation should take care of the distance to the two rays, and the angles between them
     #     * The goal is to iteratively (O(n^2)) continue to remove one tail or promote one head to find a value that
     #       is optimal in consideration also of the number of poses that were excluded away.
-    return poses, []
+    def find_valid_trajectory(pos: np.ndarray):
+        """Find the new initial and last frame indices for a smooth trajectory."""
+
+        def compute_ray(p1, p2):
+            """Compute the direction vector (dx, dy, dz) for a ray from p1 to p2."""
+            return np.array(p2) - np.array(p1)
+
+        def ray_distance(p1, d1, p2, d2):
+            """Compute the shortest distance between two skewed rays in 3D."""
+            n = np.cross(d1, d2)
+            if np.linalg.norm(n) == 0:
+                return None, None, None  # Parallel rays
+            n = n / np.linalg.norm(n)
+
+            t = np.dot(np.cross((p2 - p1), d2), n) / np.dot(np.cross(d1, d2), n)
+            s = np.dot(np.cross((p1 - p2), d1), n) / np.dot(np.cross(d2, d1), n)
+
+            closest_p1 = p1 + t * d1
+            closest_p2 = p2 + s * d2
+            distance = np.linalg.norm(closest_p1 - closest_p2)
+
+            return closest_p1, closest_p2, distance
+
+        def is_between(point, ref1, ref2, direction):
+            """Check if 'point' is between 'ref1' and 'ref2' along the given direction."""
+            ref1_proj = np.dot(ref1 - point, direction)
+            ref2_proj = np.dot(ref2 - point, direction)
+            return ref1_proj * ref2_proj <= 0  # The signs should be opposite
+
+        distances = []  # List[Tuple(start_idx, end_idx, closest_p1, closest_p2, distance, start_ray, end_ray)]
+        start_idx = 0
+        while start_idx < len(pos) - 3:
+            end_idx = len(pos) - 1
+            while end_idx - start_idx > 3:
+                start_ray = compute_ray(pos[start_idx + 1], pos[start_idx])
+                end_ray = compute_ray(pos[end_idx - 1], pos[end_idx])
+
+                closest_p1, closest_p2, distance = ray_distance(pos[start_idx + 1], start_ray, pos[end_idx - 1],
+                                                                end_ray)
+                if closest_p1 is not None:
+                    # Ensure pos[start_idx] is between closest_p1 and pos[start_idx + 1]
+                    if not is_between(pos[start_idx], closest_p1, pos[start_idx + 1], start_ray):
+                        end_idx -= 1
+                        continue
+
+                    # Ensure pos[end_idx] is between closest_p2 and pos[end_idx - 1]
+                    if not is_between(pos[end_idx], closest_p2, pos[end_idx - 1], end_ray):
+                        end_idx -= 1
+                        continue
+
+                    distances.append((start_idx, end_idx, closest_p1, closest_p2, distance, start_ray, end_ray))
+                    break  # Found a valid smooth trajectory
+
+                end_idx -= 1  # Exclude last frame and retry
+            start_idx += 1
+
+        return distances
+
+    xyz_poses = np.array([pose[:3, 3] for pose in poses])
+    distances = find_valid_trajectory(xyz_poses)
+
+    if distances:
+        optimal_exclusion = None
+
+        print(len(distances))
+        for distance in distances:
+            start_idx, end_idx, *_ = distance
+            num_excluded_poses = len(poses) - 1 - end_idx + start_idx
+            print(f'Num excluded camera poses: {num_excluded_poses}')
+            optimal_exclusion = optimal_exclusion or (num_excluded_poses, start_idx, end_idx)
+            # Take the minimum pose exclusion amount
+            if (num_excluded_poses < optimal_exclusion[0] or
+                # Prefer excluding poses from the end instead of from the start
+               (num_excluded_poses == optimal_exclusion[0] and start_idx < optimal_exclusion[1])):
+                optimal_exclusion = (num_excluded_poses, start_idx, end_idx)
+        print(f'Optimal camera pose exclusion amount is {optimal_exclusion[0]} where start_idx={optimal_exclusion[1]}!')
+        return poses[optimal_exclusion[1]:optimal_exclusion[2]], poses[:optimal_exclusion[1]] + poses[optimal_exclusion[2]:]
+
+    raise ValueError('No valid rays were found.')
 
 
 def generate_smooth_pose_trajectory_connection(
@@ -55,7 +134,7 @@ def generate_smooth_pose_trajectory_connection(
 
     # Determine number of interpolation points based on average spacing
     avg_spacing = np.mean(segment_lengths)
-    num_interp_points = 10 # int(cumulative_lengths[-1] / avg_spacing)
+    num_interp_points = 10  # int(cumulative_lengths[-1] / avg_spacing)
 
     # Distribute new points uniformly along arc length
     interp_arc_lengths = np.linspace(0, 1, num_interp_points)
