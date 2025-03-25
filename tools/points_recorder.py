@@ -7,7 +7,7 @@ import numpy as np
 clicked_points = []
 
 # File where points will be saved
-points_file = 'clicked_points.pkl'
+points_file = 'clicked_points_bad.pkl'
 
 # Maximum distance to consider a point for deletion (in data coordinates)
 max_distance = 0.5

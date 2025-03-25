@@ -186,25 +186,21 @@ def compute_spline_and_sample_poses(poses: list):
         raise ValueError("At least 6 poses are required (3 from the start and 3 from the end).")
 
     key_positions = np.array([pose[:3, 3] for pose in poses[-3:] + poses[:3]])
-    num_generated_frames = 3
+
+    # Compute average arc distance
+    first_poses_distance = np.linalg.norm(poses[2] - poses[1]) + np.linalg.norm(poses[1] - poses[0])
+    last_poses_distance = np.linalg.norm(poses[-3] - poses[-2]) + np.linalg.norm(poses[-2] - poses[-1])
+    average_pose_distance = (first_poses_distance + last_poses_distance) / 4
+    print(average_pose_distance)
+
+    last_to_first_pose_distance = np.linalg.norm(poses[0] - poses[-1])
+    num_generated_frames = int(last_to_first_pose_distance / average_pose_distance)
     total_spline_frames = 3 + 3 + num_generated_frames
 
     # Compute a cubic spline in 3D space
-    t_total = np.linspace(0, 1, len(key_positions))  # TODO: is it the true x value?
     t_total = np.linspace(0, 1, total_spline_frames)
     t_spline = np.concatenate((t_total[:3], t_total[-3:]))
     spline = CubicSpline(t_spline, key_positions, axis=0)
-
-    # Compute arc length along the spline
-    arc_distances = np.cumsum(np.linalg.norm(np.diff(spline(t_total), axis=0), axis=1))
-    arc_distances = np.insert(arc_distances, 0, 0)
-
-    # Compute average arc distance
-    first_arc_distance = arc_distances[2]  # from point 0 to point 2
-    last_arc_distance = arc_distances[-1] - arc_distances[-3]  # from point -3 to point -1
-    average_spline_arc_distance = (first_arc_distance + last_arc_distance) / 4
-    print(arc_distances)
-    print(average_spline_arc_distance)
 
     # Sample new poses along the spline
     sampled_positions = []
@@ -213,7 +209,6 @@ def compute_spline_and_sample_poses(poses: list):
     # SLERP from pose[-1] to pose[0]
     slerp = Slerp([0, 1], Rotation.from_matrix([poses[-1][:3, :3], poses[0][:3, :3]]))
 
-    num_steps = int(arc_distances[-1] / average_spline_arc_distance)
     num_steps = num_generated_frames
     for i in range(num_steps + 1):
         s = t_total[total_spline_frames - 3 - i]
