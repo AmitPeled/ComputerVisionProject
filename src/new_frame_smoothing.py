@@ -4,10 +4,11 @@ from scipy.spatial.transform import Rotation, Slerp
 from scipy.interpolate import CubicSpline
 
 
-def find_best_original_edge_points(poses: List[np.ndarray]) -> Tuple[List, List]:
+def find_best_original_edge_points(poses: List[np.ndarray], image_paths: List[str]) -> Tuple[List, List, List]:
     """
     Find edge points and exclude the bad points in between.
     :param poses: C2W poses extracted from colman images.txt file
+    :param image_paths: The frames related to the camera poses
     :return: (List of the new poses with modified edge points after excluding the bad points in between,
               List of excluded poses)
     """
@@ -91,32 +92,41 @@ def find_best_original_edge_points(poses: List[np.ndarray]) -> Tuple[List, List]
             optimal_exclusion = optimal_exclusion or (num_excluded_poses, start_idx, end_idx)
             # Take the minimum pose exclusion amount
             if (num_excluded_poses < optimal_exclusion[0] or
-                # Prefer excluding poses from the end instead of from the start
-               (num_excluded_poses == optimal_exclusion[0] and start_idx < optimal_exclusion[1])):
+                    # Prefer excluding poses from the end instead of from the start
+                    (num_excluded_poses == optimal_exclusion[0] and start_idx < optimal_exclusion[1])):
                 optimal_exclusion = (num_excluded_poses, start_idx, end_idx)
         print(f'Optimal camera pose exclusion amount is {optimal_exclusion[0]} where start_idx={optimal_exclusion[1]}!')
-        return poses[optimal_exclusion[1]:optimal_exclusion[2]], poses[:optimal_exclusion[1]] + poses[optimal_exclusion[2]:]
+        return (poses[optimal_exclusion[1]:optimal_exclusion[2] + 1],
+                image_paths[optimal_exclusion[1]:optimal_exclusion[2] + 1],
+                poses[:optimal_exclusion[1]] + poses[optimal_exclusion[2] + 1:])
 
     raise ValueError('No valid rays were found.')
 
 
-def generate_smooth_pose_trajectory_connection(
-        poses: List[np.ndarray],
-        first_poses_env: List[np.ndarray],
-        last_poses_env: List[np.ndarray]
-) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+def generate_smooth_pose_trajectory_connection(poses: List[np.ndarray]) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
-    Generate new poses to smoothly connect end poses to the start poses.
-    :param poses: C2W poses, after excluding bad points between last and first points
-    :param first_poses_env: Several first positions of the trajectory to be connected
-    :param last_poses_env: Several last positions of the trajectory to be connected
-    :return: (List of all poses in the smoothed trajectory, List of generated poses to smoothly connect last and first
-              points)
+    Generate new poses to smoothly connect end poses to the start poses using spline.
+    :param poses: C2W poses, after bad points between last and first points were excluded
+    :return: (List of all poses in the smoothed trajectory, List of new generated poses to smoothly connect last and
+              first points)
     """
+
     # Use cubic spline the passes through first_poses_env and last_poses_env.
     # Calculate the curve's length and generate new points, in an amount such that the curve's length between each
     # two points equals the average length between two consecutive points of first and last poses.
     # Now, don't forget to consider the camera rotations as well in the generated poses - use SLERP for that.
+    def generate_frames_using_spline(normalized_points, keypoints, num_samples=10):
+        """Generate interpolated frames using a spline between end_idx and start_idx."""
+        spline_x = CubicSpline(normalized_points, keypoints[:, 0])
+        spline_y = CubicSpline(normalized_points, keypoints[:, 1])
+        spline_z = CubicSpline(normalized_points, keypoints[:, 2])
+
+        t_new = np.linspace(0, 1, num_samples)
+        new_frames = np.vstack((spline_x(t_new), spline_y(t_new), spline_z(t_new))).T
+        return new_frames[5:-2]
+
+    first_poses_env = poses[:3]
+    last_poses_env = poses[-3:]
 
     first_positions = np.array([pose[:3, 3] for pose in first_poses_env])
     last_positions = np.array([pose[:3, 3] for pose in last_poses_env])
@@ -133,12 +143,12 @@ def generate_smooth_pose_trajectory_connection(
     spline = CubicSpline(normalized_lengths, all_positions, axis=0)
 
     # Determine number of interpolation points based on average spacing
-    avg_spacing = np.mean(segment_lengths)
+    # avg_spacing = np.mean(segment_lengths)
     num_interp_points = 10  # int(cumulative_lengths[-1] / avg_spacing)
 
     # Distribute new points uniformly along arc length
     interp_arc_lengths = np.linspace(0, 1, num_interp_points)
-    interp_positions = spline(interp_arc_lengths)
+    interp_positions = generate_frames_using_spline(normalized_lengths, all_positions)  # spline(interp_arc_lengths)
 
     # Interpolate rotations using Slerp
     first_rotations = Rotation.from_matrix([pose[:3, :3] for pose in first_poses_env])
@@ -155,12 +165,76 @@ def generate_smooth_pose_trajectory_connection(
         new_pose[:3, 3] = pos
         generated_poses.append(new_pose)
 
-    return poses + generated_poses, generated_poses
+    return generated_poses
 
 
-def apply_smoothing_algorithm(poses: List[np.ndarray]) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
-    new_poses, excluded_poses = find_best_original_edge_points(poses)
-    smoothed_poses, generated_poses = generate_smooth_pose_trajectory_connection(new_poses,
-                                                                                 new_poses[0:3],
-                                                                                 new_poses[-4:-1])
-    return smoothed_poses, generated_poses, excluded_poses
+from scipy.spatial.transform import Rotation, Slerp
+
+
+def compute_spline_and_sample_poses(poses: list):
+    """
+    Interpolates a cubic spline through the first and last 3 poses in the list,
+    calculates the spline-arc distance, and samples new camera positions and orientations.
+
+    Args:
+        poses (list of np.ndarray): List of 4x4 camera-to-world pose matrices.
+
+    Returns:
+        list of np.ndarray: Interpolated camera poses.
+    """
+    if len(poses) < 6:
+        raise ValueError("At least 6 poses are required (3 from the start and 3 from the end).")
+
+    key_positions = np.array([pose[:3, 3] for pose in poses[-3:] + poses[:3]])
+    num_generated_frames = 3
+    total_spline_frames = 3 + 3 + num_generated_frames
+
+    # Compute a cubic spline in 3D space
+    t_total = np.linspace(0, 1, len(key_positions))  # TODO: is it the true x value?
+    t_total = np.linspace(0, 1, total_spline_frames)
+    t_spline = np.concatenate((t_total[:3], t_total[-3:]))
+    spline = CubicSpline(t_spline, key_positions, axis=0)
+
+    # Compute arc length along the spline
+    arc_distances = np.cumsum(np.linalg.norm(np.diff(spline(t_total), axis=0), axis=1))
+    arc_distances = np.insert(arc_distances, 0, 0)
+
+    # Compute average arc distance
+    first_arc_distance = arc_distances[2]  # from point 0 to point 2
+    last_arc_distance = arc_distances[-1] - arc_distances[-3]  # from point -3 to point -1
+    average_spline_arc_distance = (first_arc_distance + last_arc_distance) / 4
+    print(arc_distances)
+    print(average_spline_arc_distance)
+
+    # Sample new poses along the spline
+    sampled_positions = []
+    sampled_rotations = []
+
+    # SLERP from pose[-1] to pose[0]
+    slerp = Slerp([0, 1], Rotation.from_matrix([poses[-1][:3, :3], poses[0][:3, :3]]))
+
+    num_steps = int(arc_distances[-1] / average_spline_arc_distance)
+    num_steps = num_generated_frames
+    for i in range(num_steps + 1):
+        s = t_total[total_spline_frames - 3 - i]
+        sampled_positions.append(spline(s))
+        sampled_rotations.append(slerp(s).as_matrix())
+
+    # Construct interpolated c2w matrices
+    interpolated_poses = []
+    for pos, rot in zip(sampled_positions, sampled_rotations):
+        new_pose = np.eye(4)
+        new_pose[:3, :3] = rot
+        new_pose[:3, 3] = pos
+        interpolated_poses.append(new_pose)
+
+    return interpolated_poses
+
+
+def apply_smoothing_algorithm(
+        poses: List[np.ndarray], image_paths: List[str]
+) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
+    new_poses, new_image_paths, excluded_poses = find_best_original_edge_points(poses, image_paths)
+    generated_poses = generate_smooth_pose_trajectory_connection(new_poses)
+    generated_poses = compute_spline_and_sample_poses(new_poses)
+    return new_poses, new_image_paths, generated_poses, excluded_poses
