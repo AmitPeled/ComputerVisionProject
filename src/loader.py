@@ -1,162 +1,74 @@
+from PIL import Image
 import os
-import numpy as np
-import json
+from pathlib import Path
 
-from .utils import elu_to_c2w, spherical_to_cartesian, load_image, qvec_to_rotmat, rotmat
+from .config import *
+from .common import *
+from .utils import load_image, qvec_to_rotmat, rotmat
 
 
-def load_quick(root_path, type):
+def get_image(image_path, image_size=256):
+    return load_image(image_path, sz=image_size)
+
+
+def get_images(image_paths, image_size=256):
+    images = []
+    for fpath in image_paths:
+        if fpath is None:
+            images.append(None)
+            continue
+
+        if not os.path.exists(fpath):
+            images.append(None)
+            print(f'Image not found at {fpath}')
+            continue
+
+        images.append(get_image(fpath, image_size))
+    return images
+
+
+def compress_jpeg_quality(input_path, quality=15):
+    output_dir = Path(r'C:\WINDOWS\Temp')
+    output_name = Path(input_path).stem + '_reduced_quality' + Path(input_path).suffix
+    out_path = str(output_dir / output_name)
+    os.makedirs(output_dir, exist_ok=True)
+    if input_path.lower().endswith(('.jpg', '.jpeg')):
+        img = Image.open(input_path)
+        img.save(out_path, 'JPEG', quality=quality, optimize=True)
+    return out_path
+
+
+def get_new_images(new_image_paths, image_size):
+    if not USE_ALG and GENERATE:
+        generated = []
+        for path in new_image_paths[len(new_image_paths) - len(GENERATED_IDXS):]:
+            generated.append(compress_jpeg_quality(path))
+        new_image_paths[len(new_image_paths) - len(GENERATED_IDXS):] = generated
+    return get_images(new_image_paths, image_size)
+
+
+def old_load_colmap(root_path):
+    image_poses = []
     poses = []
-    legends = []
-    colors = []
     image_paths = []
 
-    if type is None:
-        pose_path = os.path.join(root_path, 'poses.json')
-        print(f'Load poses from {pose_path}')
-        with open(pose_path, 'r') as fin:
-            jdata = json.load(fin)
-        type = jdata['type']
-        frame_list = jdata['frames']
-    else:
-        pose_root = os.path.join(root_path, 'poses')
-        print(f'Load poses from {pose_root}')
-        frame_list = os.listdir(pose_root)
-
-    image_root = os.path.join(root_path, 'images')
-    print(f'Load images from {image_root}')
-
-    for idx, frame in enumerate(frame_list):
-
-        fid = idx
-
-        if isinstance(frame, str):
-
-            fname = frame
-            vals = fname.split('.')
-            fid, ext = vals[0], vals[-1]
-
-            fpath = os.path.join(pose_root, fname)
-
-            if ext == 'npy':
-                mat = np.load(fpath)
-            elif ext == 'txt':
-                mat = np.loadtxt(fpath)
-
-            img_paths = [os.path.join(image_root, f'{fid}.{ext}') for ext in ['png', 'jpg', 'jpeg']]
-            img_paths = [fpath for fpath in img_paths if os.path.exists(fpath)]
-
-            img_path = img_paths[0] if len(img_paths) > 0 else None
-
-        elif isinstance(frame, dict):
-
-            if 'image_name' in frame and frame['image_name']:
-                fname = frame['image_name']
-                img_path = os.path.join(image_root, fname)
-            else:
-                img_path = None
-
-            mat = np.array(frame['pose'])
-
-        if type == 'c2w':
-            c2w = mat
-            if c2w.shape[0] == 3:
-                c2w = np.concatenate([c2w, np.zeros((1, 4))], axis=0)
-                c2w[-1, -1] = 1
-
-        if type == 'w2c':
-            w2c = mat
-            if w2c.shape[0] == 3:
-                w2c = np.concatenate([w2c, np.zeros((1, 4))], axis=0)
-                w2c[-1, -1] = 1
-            c2w = np.linalg.inv(w2c)
-
-        elif type == 'elu':
-            eye = mat[0, :]
-            lookat = mat[1, :]
-            up = mat[2, :]
-            c2w = elu_to_c2w(eye, lookat, up)
-
-        elif type == 'sph' or type == 'xyz':
-
-            assert (mat.size == 3)
-
-            if type == 'sph':
-                eye = spherical_to_cartesian((np.deg2rad(mat[0]), np.deg2rad(mat[1]), mat[2]))
-            else:
-                eye = mat
-
-            lookat = np.zeros(3)
-            up = np.array([0, 0, 1])
-            c2w = elu_to_c2w(eye, lookat, up)
-
-        poses.append(c2w)
-        legends.append(os.path.basename(img_path) if img_path else str(fid))
-        colors.append('blue')
-        image_paths.append(img_path)
-
-    return poses, legends, colors, image_paths
-
-
-def load_nerf(root_path):
-    poses = []
-    legends = []
-    colors = []
-    image_paths = []
-
-    pose_path = os.path.join(root_path, 'transforms.json')
+    root_path = r'C:\Users\iritp\Downloads\Instant-NGP-for-RTX-5000\Instant-NGP-for-RTX-5000\scripts\shoes'
+    pose_path = os.path.join(root_path, 'colmap_text', 'images.txt')
     print(f'Load poses from {pose_path}')
-
-    with open(pose_path, 'r') as fin:
-        jdata = json.load(fin)
-
-    for fi, frm in enumerate(jdata['frames']):
-
-        c2w = np.array(frm['transform_matrix'])
-        poses.append(c2w)
-        colors.append('blue')
-
-        if 'file_path' in frm:
-            fpath = frm['file_path']
-            fname = os.path.basename(fpath)
-
-            legends.append(fname)
-            image_paths.append(os.path.join(root_path, fpath))
-        else:
-            legends.append(str(fi))
-            image_paths.append(None)
-
-    return poses, legends, colors, image_paths
-
-
-def load_colmap(root_path):
-    poses = []
-    legends = []
-    colors = []
-    image_paths = []
-
-    pose_path = os.path.join(root_path, 'images.txt')
-    print(f'Load poses from {pose_path}')
-
     fin = open(pose_path, 'r')
-
     up = np.zeros(3)
 
-    i = 0
-    for line in fin:
-        line = line.strip()
-        if line[0] == "#":
-            continue
-        i = i + 1
-        if i % 2 == 0:
-            continue
+    lines = fin.readlines()
+    images_lines = {'_'.join(line.strip().split(' ')[9:]): line.strip() for line in lines[4::2]}
+
+    import collections
+    sorted_images = collections.OrderedDict(sorted(images_lines.items()))
+    for fname, line in sorted_images.items():
+        print(fname)
         elems = line.split(' ')
 
-        fname = '_'.join(elems[9:])
-        legends.append(fname)
-
-        fpath = os.path.join(root_path, '../frames', fname)
-        image_paths.append(fpath)
+        # fpath = os.path.join(root_path, fname)
+        fpath = os.path.join(r'C:\Users\iritp\Downloads\resized_shoes_images', fname)
 
         qvec = np.array(tuple(map(float, elems[1:5])))
         tvec = np.array(tuple(map(float, elems[5:8])))
@@ -176,7 +88,7 @@ def load_colmap(root_path):
         up += c2w[0:3, 1]
 
         poses.append(c2w)
-        colors.append('blue')
+        image_paths.append(fpath)
 
     fin.close()
 
@@ -187,5 +99,30 @@ def load_colmap(root_path):
 
     for i in range(0, len(poses)):
         poses[i] = np.matmul(up_rot, poses[i])
+        image_poses.append(ImagePose(pose=poses[i], image_path=image_paths[i], image=get_image(image_paths[i])))
+
+    return image_poses
+
+
+def load_colmap(root_path):
+    from pathlib import Path
+    import json
+    import collections
+
+    poses = []
+    legends = []
+    colors = []
+    image_paths = []
+    root_path = Path(r'C:\Users\iritp\Downloads\Instant-NGP-for-RTX-5000\Instant-NGP-for-RTX-5000\scripts\shoes')
+
+    pose_path = root_path / 'transforms.json'
+    transforms = json.loads(pose_path.read_text())
+    f_by_img_path = {f["file_path"]: f for f in transforms["frames"]}
+    for img_path, f in collections.OrderedDict(sorted(f_by_img_path.items())).items():
+        print(img_path)
+        poses.append(np.array(f["transform_matrix"]))
+        image_paths.append(str(root_path / f["file_path"]))
+        colors.append("blue")
+        legends.append(Path(img_path).stem)
 
     return poses, legends, colors, image_paths

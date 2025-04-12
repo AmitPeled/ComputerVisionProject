@@ -2,6 +2,8 @@ from typing import Tuple, List
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 from scipy.interpolate import CubicSpline
+from src.config import *
+from src.common import *
 
 
 def find_best_original_edge_points(poses: List[np.ndarray], image_paths: List[str]) -> Tuple[List, List, List]:
@@ -88,7 +90,8 @@ def find_best_original_edge_points(poses: List[np.ndarray], image_paths: List[st
         for distance in distances:
             start_idx, end_idx, *_ = distance
             num_excluded_poses = len(poses) - 1 - end_idx + start_idx
-            print(f'Num excluded camera poses: {num_excluded_poses}')
+            print(
+                f'Num excluded camera poses: {num_excluded_poses}. {start_idx} from the start, {len(poses) - 1 - end_idx} from the end')
             optimal_exclusion = optimal_exclusion or (num_excluded_poses, start_idx, end_idx)
             # Take the minimum pose exclusion amount
             if (num_excluded_poses < optimal_exclusion[0] or
@@ -226,10 +229,25 @@ def compute_spline_and_sample_poses(poses: list):
     return interpolated_poses
 
 
-def apply_smoothing_algorithm(
-        poses: List[np.ndarray], image_paths: List[str]
-) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
-    new_poses, new_image_paths, excluded_poses = find_best_original_edge_points(poses, image_paths)
-    generated_poses = generate_smooth_pose_trajectory_connection(new_poses)
-    generated_poses = compute_spline_and_sample_poses(new_poses)
-    return new_poses, new_image_paths, generated_poses, excluded_poses
+def apply_smoothing_algorithm(image_poses: List[ImagePose]) -> Tuple[List[ImagePose], List[ImagePose], List[ImagePose]]:
+    # poses = [im.pose for im in image_poses]
+    # image_paths = [im.image_path for im in image_poses]
+    # new_poses, new_image_paths, excluded_poses = find_best_original_edge_points(poses, image_paths)
+    # generated_poses = compute_spline_and_sample_poses(new_poses)
+    if not USE_ALG:
+        if GENERATE:
+            invalid_indices = GENERATED_IDXS + EXCLUDE_IDXS + FILTER_IDXS
+            new_image_poses = [image_poses[i] for i in range(len(image_poses)) if i not in invalid_indices]
+            generated_image_poses = [image_poses[i] for i in range(len(image_poses)) if i in GENERATED_IDXS]
+            excluded_image_poses = [image_poses[i] for i in range(len(image_poses)) if i in EXCLUDE_IDXS]
+            # new_poses = new_poses[GENERATED_IDXS[0]:] + new_poses[:GENERATED_IDXS[0]]
+            # new_image_paths = image_paths[GENERATED_IDXS[-1] + 1:] + image_paths[:GENERATED_IDXS[-1] + 1]
+        else:
+            new_image_poses = image_poses
+            generated_image_poses = []
+            excluded_image_poses = []
+        filter_idxs = FILTER_IDXS + GENERATED_IDXS if not GENERATE else FILTER_IDXS
+        new_image_poses = [new_image_poses[i] for i in range(len(new_image_poses)) if i not in filter_idxs]
+        new_image_poses = new_image_poses[GENERATED_IDXS[0]:] + new_image_poses[:GENERATED_IDXS[0]]
+
+    return new_image_poses, generated_image_poses, excluded_image_poses

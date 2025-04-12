@@ -1,0 +1,5 @@
+USE_ALG = False
+GENERATE = True
+FILTER_IDXS = []
+GENERATED_IDXS = [4, 5, 6]
+EXCLUDE_IDXS =  []

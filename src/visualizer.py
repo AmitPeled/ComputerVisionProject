@@ -1,5 +1,3 @@
-import os
-
 from PIL import Image
 import plotly.graph_objects as go
 import numpy as np
@@ -54,49 +52,30 @@ def calc_cam_cone_pts_3d(c2w, fov_deg, zoom=1.0):
 
 
 class CameraVisualizer:
-
-    def __init__(self, original_poses, new_poses, generated_poses, excluded_poses, legends, colors, images=None,
-                 mesh_path=None, camera_x=1.0):
+    def __init__(self, original_image_poses, new_image_poses, generated_image_poses, excluded_image_poses):
         self._fig = None
-        self._camera_x = camera_x
-        self._all_poses = new_poses + excluded_poses
-        self._original_poses = original_poses
-        self._new_poses = new_poses
-        self._generated_poses = generated_poses
-        self._excluded_poses = excluded_poses
+        self._camera_x = 1.0
+        self._all_image_poses = new_image_poses + excluded_image_poses
+        self._original_image_poses = original_image_poses
+        self._new_image_poses = new_image_poses
+        self._generated_image_poses = generated_image_poses
+        self._excluded_image_poses = excluded_image_poses
 
-        self._legends = legends
-        self._colors = colors
-
-        self._raw_images = None
+        self._raw_images = [im.image for im in self._new_image_poses]
         self._bit_images = None
         self._image_colorscale = None
 
-        if images is not None:
-            self._raw_images = images
-            self._bit_images = []
-            self._image_colorscale = []
-            for img in images:
-                if img is None:
-                    self._bit_images.append(None)
-                    self._image_colorscale.append(None)
-                    continue
-
-                bit_img, colorscale = self.encode_image(img)
-                self._bit_images.append(bit_img)
-                self._image_colorscale.append(colorscale)
-
-        self._mesh = None
-        if mesh_path is not None and os.path.exists(mesh_path):
-            import trimesh
-            self._mesh = trimesh.load(mesh_path, force='mesh')
+        self._bit_images = []
+        self._image_colorscale = []
+        for img in self._raw_images:
+            bit_img, colorscale = self.encode_image(img)
+            self._bit_images.append(bit_img)
+            self._image_colorscale.append(colorscale)
 
     def encode_image(self, raw_image):
-        '''
+        """
         :param raw_image (H, W, 3) array of uint8 in [0, 255].
-        '''
-        # https://stackoverflow.com/questions/60685749/python-plotly-how-to-add-an-image-to-a-3d-scatter-plot
-
+        """
         dum_img = Image.fromarray(np.ones((3, 3, 3), dtype='uint8')).convert('P', palette='WEB')
         idx_to_color = np.array(dum_img.getpalette()).reshape((-1, 3))
 
@@ -122,58 +101,34 @@ class CameraVisualizer:
 
     def update_camera_figure(
             self, scene_bounds,
-            base_radius=0.0, zoom_scale=1.0, fov_deg=50.,
-            mesh_z_shift=0.0, mesh_scale=1.0,
+            base_radius=0.0, fov_deg=50.,
             show_background=False, show_grid=False, show_ticklabels=False, y_up=False,
             highlight_index=None,
             scale_factor=0.9
     ):
-
         fig = go.Figure()
 
-        if self._mesh is not None:
-            fig.add_trace(
-                go.Mesh3d(
-                    x=self._mesh.vertices[:, 0] * mesh_scale,
-                    y=self._mesh.vertices[:, 2] * -mesh_scale,
-                    z=(self._mesh.vertices[:, 1] + mesh_z_shift) * mesh_scale,
-                    i=self._mesh.faces[:, 0],
-                    j=self._mesh.faces[:, 1],
-                    k=self._mesh.faces[:, 2],
-                    color=None,
-                    facecolor=None,
-                    opacity=0.8,
-                    lighting={'ambient': 1},
-                )
-            )
-
-        highlight_index = highlight_index % len(self._new_poses) if highlight_index else None
-        for i in range(len(self._all_poses)):
+        for i in range(len(self._all_image_poses)):
             camera_lines_scale_factor = scale_factor if i != highlight_index else 1
+            legend = str(i)
 
-            pose = self._all_poses[i]
+            pose = self._all_image_poses[i].pose
             if i == highlight_index:
                 clr = 'green'
-            elif any(np.array_equal(self._all_poses[i], pose) for pose in self._generated_poses):
+            elif any(np.array_equal(self._all_image_poses[i].pose, pose.pose) for pose in self._generated_image_poses):
                 clr = 'deeppink'
-            elif any(np.array_equal(self._all_poses[i], pose) for pose in self._excluded_poses):
+            elif any(np.array_equal(self._all_image_poses[i].pose, pose.pose) for pose in self._excluded_image_poses):
                 clr = 'lightgrey'
             else:
                 clr = 'blue'
-            legend = str(i)
 
             edges = [(0, 1), (0, 2), (0, 3), (0, 4), (1, 2), (2, 3), (3, 4), (4, 1), (0, 5)]
-
             cone = calc_cam_cone_pts_3d(pose, fov_deg) * camera_lines_scale_factor
-            radius = np.linalg.norm(pose[:3, -1])
 
             if i == highlight_index:  # Draw image
-                image_coordinates_scale_factor = camera_lines_scale_factor * 1.1
                 image_dimensions_scale_factor = camera_lines_scale_factor / 2
                 if self._bit_images and self._bit_images[i]:
                     raw_image = self._raw_images[i]
-                    bit_image = self._bit_images[i]
-                    colorscale = self._image_colorscale[i]
 
                     (H, W, C) = raw_image.shape
 
@@ -188,24 +143,6 @@ class CameraVisualizer:
                     xyz = np.concatenate([x[..., None], y[..., None], z[..., None]], axis=-1)
                     rot_xyz = np.matmul(xyz, pose[:3, :3].T) + pose[:3, -1]
 
-                    x, y, z = rot_xyz[:, :, 0], rot_xyz[:, :, 1], rot_xyz[:, :, 2]
-
-                    fig.add_trace(go.Surface(
-                        x=x * image_coordinates_scale_factor, y=y * image_coordinates_scale_factor,
-                        z=z * image_coordinates_scale_factor,
-                        surfacecolor=bit_image,
-                        cmin=0,
-                        cmax=255,
-                        colorscale=colorscale,
-                        showscale=False,
-                        opacity=0.9,  # Adjust transparency (0 = fully transparent, 1 = opaque)
-                        lighting_diffuse=1.0,
-                        lighting_ambient=1.0,
-                        lighting_fresnel=1.0,
-                        lighting_roughness=1.0,
-                        lighting_specular=0.3
-                    ))
-
             for (edge_index, edge) in enumerate(edges):
                 (x1, x2) = (cone[edge[0], 0], cone[edge[1], 0])
                 (y1, y2) = (cone[edge[0], 1], cone[edge[1], 1])
@@ -215,7 +152,6 @@ class CameraVisualizer:
                     line=dict(color=clr, width=3 * camera_lines_scale_factor),
                     name=legend, showlegend=(edge_index == 0)))
 
-            # Add label.
             if cone[0, 2] < 0:
                 fig.add_trace(go.Scatter3d(
                     x=[cone[0, 0]], y=[cone[0, 1]], z=[cone[0, 2] - 0.05], showlegend=False,
