@@ -158,10 +158,22 @@ After applying the algorithm:
 * The 4 last frames were excluded (grayed out in the drawing)
 * 2 new frames were generated (drawn in pink) to enclose the trajectory
 
+#### Comparison of the gifs before and after applying the smoothing
+
 ![](docs/gifs/tag_gif_orig.gif)
 ![](docs/gifs/tag_gif_fixed.gif)
 
 ### Example 2 – filming my army shoes in a surround trajectory
+Complete camera trajectory:
+* As seen, 3 Frames were added by the algorithm:
+
+![](docs/images/image26.png)
+
+Viewing the trajectory from above:
+
+![](docs/images/image27.png)
+
+#### Comparison of the gifs before and after applying the smoothing
 
 ![](docs/gifs/shoes_gif_orig.gif)
 ![](docs/gifs/shoes_gif_fixed.gif)

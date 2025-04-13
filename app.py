@@ -55,7 +55,7 @@ def main():
     viz = CameraVisualizer(image_poses, total_new_poses, generated_image_poses, excluded_image_poses)
 
     gif_fig = viz.update_gif_figure(0)
-    camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True,
+    camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, show_grid=True,
                                           show_ticklabels=True,
                                           show_background=True, y_up=args.y_up)
 
@@ -82,7 +82,7 @@ def main():
     def update_figure(n):
         pose_index = n % len(total_new_poses)
         new_gif_fig = viz.update_gif_figure(pose_index)
-        new_camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, zoom_scale=1, show_grid=True,
+        new_camera_fig = viz.update_camera_figure(args.scene_size, base_radius=1, show_grid=True,
                                                   show_ticklabels=True,
                                                   show_background=True, y_up=args.y_up, highlight_index=pose_index)
 
