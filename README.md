@@ -4,22 +4,26 @@ The algorithm to smoothen the camera pose trajectory is split to 2 parts:
 2.	Generating new frames to connect the new last_camera_pose and the new initial_camera_pose in a smooth pattern.
 ## Algorithm part 1
 To decide how to perform part 1 of the algorithm – which is, to determine which new initial_camera_pose and last_camera_pose pair to use (which means, the frames in between will be excluded), I initially made a reduction to the 2D plane.
+
 I looked at the first pair of poses (`pos[1]` and `pos[0]`), and last pair of poses (`pos[-2]` and `pos[-1]`) and draw a ray from each pair of consecutive points 
 * The "`first_ray`", which is the ray which initiates at `pos[1]` and passes through `pos[0]`.
-We say that the `first_ray` is defined by the first pose (`pos[0]`).
+
+  We say that the `first_ray` is defined by the first pose (`pos[0]`).
 * The "`last_ray`", which is the ray which initiates at `pos[-2]` and passes through `pos[-1]`.
-We say that the `last_ray` is defined by the last pose (`pos[-1]`).
+
+  We say that the `last_ray` is defined by the last pose (`pos[-1]`).
+
 The algorithm then proceeds as follows:
-* If `first_ray` and `last_ray` doesn't intersect, then the (pos[0], pos[-1]) pair isn't good enough as the edge points of the trajectory.
+* If `first_ray` and `last_ray` doesn't intersect, then the (`pos[0]`, `pos[-1]`) pair isn't good enough as the edge points of the trajectory.
   * Note that, we are talking about a ray and not a line for a reason – the intersection must be in the right direction (which is between the first and last poses).
 
 Therefore, a new `first_pose` and `last_pose` pair should be found iteratively.
-There is O(n^2) such pairs.
-* If there is, then save pair of new poses including the number of frames excluded for later consideration and continue.
+There are O(n<sup>2</sup>) such pairs.
+* If there is, then save the pair of new poses including the number of frames excluded for later consideration and continue.
 
   Then, the algorithm picks the pair of poses which excludes the minimum number of frames.
 
-  If there are valid pairs that exclude minimal number of frames, then the algorithm prioritizes frames that are excluded from the end of the trajectory over the start. 
+  If there are multiple valid pairs that exclude minimal number of frames, then the algorithm prioritizes frames that are excluded from the end of the trajectory over the start. 
 * Another consideration that can be made to decide which are the optimal pair among those who provided minimal exclusion is by picking the pair where the distance between the last pose and the start pose is the shortest.
 
   The transition to the 3D poses is made by looking at the rays' distance instead of intersection.
